@@ -82,6 +82,13 @@ module Tapioca
           sig { void }
           def create_common_methods
             add_relation_method("all")
+            add_relation_method(
+              "not",
+              parameters: [
+                Parlour::RbiGenerator::Parameter.new("opts", type: "T.untyped"),
+                Parlour::RbiGenerator::Parameter.new("*rest", type: "T.untyped"),
+              ]
+            )
 
             [
               :select, :reselect, :order, :reorder, :group, :limit, :offset, :joins, :left_joins, :left_outer_joins,
@@ -92,7 +99,8 @@ module Tapioca
                 method_name.to_s,
                 parameters: [
                   Parlour::RbiGenerator::Parameter.new("*args", type: "T.untyped"),
-                ],
+                  Parlour::RbiGenerator::Parameter.new("&blk", type: "T.untyped"),
+                ]
               )
             end
           end
