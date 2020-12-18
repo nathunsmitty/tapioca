@@ -139,7 +139,7 @@ module Tapioca
           klass = class_of(value)
           return if name_of(klass)&.start_with?("T::Types::", "T::Private::")
 
-          type_name = public_module?(klass) && name_of(klass) || "T.untyped"
+          type_name = name_of(klass) || "T.untyped"
           indented("#{name} = T.let(T.unsafe(nil), #{type_name})")
         end
 
@@ -289,13 +289,12 @@ module Tapioca
           prepend = interesting_ancestors.take_while { |c| !are_equal?(constant, c) }
           include = interesting_ancestors.drop(prepend.size + 1)
           extend  = interesting_singleton_class_ancestors.reject do |mod|
-            !public_module?(mod) || Module != class_of(mod) || are_equal?(mod, singleton_class)
+            Module != class_of(mod) || are_equal?(mod, singleton_class)
           end
 
           prepends = prepend
             .reverse
             .select { |mod| (name = name_of(mod)) && !name.start_with?("T::") }
-            .select(&method(:public_module?))
             .map do |mod|
               # TODO: Sorbet currently does not handle prepend
               # properly for method resolution, so we generate an
@@ -306,7 +305,6 @@ module Tapioca
           includes = include
             .reverse
             .select { |mod| (name = name_of(mod)) && !name.start_with?("T::") }
-            .select(&method(:public_module?))
             .map do |mod|
               indented("include(#{qualified_name_of(mod)})")
             end
@@ -314,7 +312,6 @@ module Tapioca
           extends = extend
             .reverse
             .select { |mod| (name = name_of(mod)) && !name.start_with?("T::") }
-            .select(&method(:public_module?))
             .map do |mod|
               indented("extend(#{qualified_name_of(mod)})")
             end
@@ -354,7 +351,6 @@ module Tapioca
 
           result = all_dynamic_includes
             .select { |mod| (name = name_of(mod)) && !name.start_with?("T::") }
-            .select(&method(:public_module?))
             .map do |mod|
               indented("include(#{qualified_name_of(mod)})")
             end.join("\n")
@@ -368,9 +364,7 @@ module Tapioca
           mixed_in_module = if extends_as_concern && Module === class_methods_module
             class_methods_module
           else
-            dynamic_extends.find do |mod|
-              mod != constant && public_module?(mod)
-            end
+            dynamic_extends.find { |mod| mod != constant }
           end
 
           return result if mixed_in_module.nil?
@@ -687,19 +681,19 @@ module Tapioca
           nil
         end
 
-        sig { params(constant: Module).returns(T::Boolean) }
-        def public_module?(constant)
-          constant_name = name_of(constant)
-          return false unless constant_name
-          return false if constant_name.start_with?('T::Private')
+        # sig { params(constant: Module).returns(T::Boolean) }
+        # def public_module?(constant)
+        #   constant_name = name_of(constant)
+        #   return false unless constant_name
+        #   return false if constant_name.start_with?('T::Private')
 
-          begin
-            # can't use !! here because the constant might override ! and mess with us
-            Module === eval(constant_name) # rubocop:disable Security/Eval
-          rescue NameError
-            false
-          end
-        end
+        #   begin
+        #     # can't use !! here because the constant might override ! and mess with us
+        #     Module === eval(constant_name) # rubocop:disable Security/Eval
+        #   rescue NameError
+        #     false
+        #   end
+        # end
 
         sig { params(constant: BasicObject).returns(Class).checked(:never) }
         def class_of(constant)
