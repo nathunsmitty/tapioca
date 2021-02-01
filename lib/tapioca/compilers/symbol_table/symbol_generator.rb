@@ -23,24 +23,26 @@ module Tapioca
           @indent = indent
           @seen = Set.new
           @alias_namespace ||= Set.new
+          @queue = Queue.new
         end
 
         sig { returns(String) }
         def generate
-          symbols
-            .sort
-            .map { |symbol| generate_from_symbol(symbol) }
-            .compact
-            .join("\n\n")
-            .concat("\n")
+          symbols.sort.each { |symbol| @queue << symbol }
+
+          output = []
+          output << generate_from_symbol(@queue.pop) until @queue.empty?
+          output.compact.join("\n\n").concat("\n")
         end
 
         private
 
         sig { returns(T::Set[String]) }
         def symbols
-          symbols = Tapioca::Compilers::SymbolTable::SymbolLoader.list_from_paths(gem.files)
-          symbols.union(engine_symbols(symbols))
+          @symbols ||= begin
+            symbols = Tapioca::Compilers::SymbolTable::SymbolLoader.list_from_paths(gem.files)
+            symbols.union(engine_symbols(symbols))
+          end
         end
 
         sig { params(symbols: T::Set[String]).returns(T::Set[String]) }
@@ -276,6 +278,8 @@ module Tapioca
           name = name_of(superclass)
           return "" if name.nil? || name.empty?
 
+          @queue.push(name) unless symbols.include?(name)
+
           " < ::#{name}"
         end
 
@@ -296,6 +300,9 @@ module Tapioca
             .reverse
             .select { |mod| (name = name_of(mod)) && !name.start_with?("T::") }
             .map do |mod|
+              name = name_of(mod)
+              @queue.push(name) unless symbols.include?(name)
+
               # TODO: Sorbet currently does not handle prepend
               # properly for method resolution, so we generate an
               # include statement instead
@@ -306,6 +313,9 @@ module Tapioca
             .reverse
             .select { |mod| (name = name_of(mod)) && !name.start_with?("T::") }
             .map do |mod|
+              name = name_of(mod)
+              @queue.push(name) unless symbols.include?(name)
+
               indented("include(#{qualified_name_of(mod)})")
             end
 
@@ -313,6 +323,9 @@ module Tapioca
             .reverse
             .select { |mod| (name = name_of(mod)) && !name.start_with?("T::") }
             .map do |mod|
+              name = name_of(mod)
+              @queue.push(name) unless symbols.include?(name)
+
               indented("extend(#{qualified_name_of(mod)})")
             end
 
@@ -352,6 +365,9 @@ module Tapioca
           result = all_dynamic_includes
             .select { |mod| (name = name_of(mod)) && !name.start_with?("T::") }
             .map do |mod|
+              name = name_of(mod)
+              @queue.push(name) unless symbols.include?(name)
+
               indented("include(#{qualified_name_of(mod)})")
             end.join("\n")
 
