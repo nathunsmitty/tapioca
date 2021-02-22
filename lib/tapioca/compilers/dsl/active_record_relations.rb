@@ -21,7 +21,9 @@ module Tapioca
             .void
         end
         def decorate(root, constant)
-          RelationGenerator.new(self, root, constant).generate
+          root.path(constant) do |model|
+            RelationGenerator.new(self, model, constant).generate
+          end
         end
 
         sig { override.returns(T::Enumerable[Module]) }
@@ -39,37 +41,22 @@ module Tapioca
             }
           end
 
-          sig { params(compiler: Base, root: T.untyped, constant: T.class_of(::ActiveRecord::Base)).void }
-          def initialize(compiler, root, constant)
+          sig { params(compiler: Base, model: Parlour::RbiGenerator::Namespace, constant: T.class_of(::ActiveRecord::Base)).void }
+          def initialize(compiler, model, constant)
             @compiler = compiler
-            @root = root
+            @model = model
             @constant = constant
-            @relation_methods_module_name = T.let(
-              "#{constant}::GeneratedRelationMethods",
-              String
-            )
-            @association_relation_methods_module_name = T.let(
-              "#{constant}::GeneratedAssociationRelationMethods",
-              String
-            )
-            @relation_class_name = T.let(
-              "#{constant}::ActiveRecord_Relation",
-              String
-            )
-            @association_relation_class_name = T.let(
-              "#{constant}::ActiveRecord_AssociationRelation",
-              String
-            )
-            @associations_collection_proxy_class_name = T.let(
-              "#{constant}::ActiveRecord_Associations_CollectionProxy",
-              String
-            )
+            @relation_methods_module_name = T.let("GeneratedRelationMethods", String)
+            @association_relation_methods_module_name = T.let("GeneratedAssociationRelationMethods", String)
+            @relation_class_name = T.let("PrivateRelation", String)
+            @association_relation_class_name = T.let("PrivateAssociationRelation", String)
+            @associations_collection_proxy_class_name = T.let("PrivateCollectionProxy", String)
             @relation_methods_module = T.let(
-              @root.create_module(@relation_methods_module_name),
+              model.create_module(@relation_methods_module_name),
               Parlour::RbiGenerator::ModuleNamespace
             )
             @association_relation_methods_module = T.let(
-              @root.create_module(@association_relation_methods_module_name),
+              model.create_module(@association_relation_methods_module_name),
               Parlour::RbiGenerator::ModuleNamespace
             )
           end
@@ -81,6 +68,149 @@ module Tapioca
           end
 
           private
+
+          sig { returns(Parlour::RbiGenerator::Namespace) }
+          attr_reader :model
+
+          sig { void }
+          def create_classes_and_includes
+            # The model always extends the generated relation module
+            model.create_extend(@relation_methods_module_name)
+            create_relation_class
+            create_association_relation_class
+            create_association_collection_proxy_class
+          end
+
+          sig { void }
+          def create_relation_class
+            superclass = "::ActiveRecord::Relation"
+
+            # The relation subclass includes the generated relation module
+            model.create_class(@relation_class_name, superclass: superclass) do |klass|
+              klass.create_include(@relation_methods_module_name)
+              klass.create_constant("Elem", value: "type_member(fixed: #{@constant})")
+            end
+          end
+
+          sig { void }
+          def create_association_relation_class
+            superclass = "::ActiveRecord::AssociationRelation"
+
+            # Association subclasses include the generated association relation module
+            model.create_class(@association_relation_class_name, superclass: superclass) do |klass|
+              klass.create_include(@association_relation_methods_module_name)
+              klass.create_constant("Elem", value: "type_member(fixed: #{@constant})")
+            end
+          end
+
+          sig { void }
+          def create_association_collection_proxy_class
+            superclass = "::ActiveRecord::Associations::CollectionProxy"
+
+            # The relation subclass includes the generated relation module
+            model.create_class(@associations_collection_proxy_class_name, superclass: superclass) do |klass|
+              klass.create_include(@association_relation_methods_module_name)
+              klass.create_constant("Elem", value: "type_member(fixed: #{@constant})")
+
+              const_collection = "T.any(" + [
+                @constant.to_s,
+                "T::Array[#{@constant}]",
+                "T::Array[#{@associations_collection_proxy_class_name}]",
+              ].join(", ") + ")"
+
+              collection_proxy_methods = ::ActiveRecord::Associations::CollectionProxy.instance_methods -
+                ::ActiveRecord::AssociationRelation.instance_methods
+
+              collection_proxy_methods.each do |method_name|
+                case method_name
+                when :<<, :append, :concat, :prepend, :push
+                  create_method(
+                    klass,
+                    method_name.to_s,
+                    parameters: [Parlour::RbiGenerator::Parameter.new("*records", type: const_collection)],
+                    return_type: @associations_collection_proxy_class_name
+                  )
+                when :clear
+                  create_method(
+                    klass,
+                    "clear",
+                    parameters: [],
+                    return_type: @associations_collection_proxy_class_name
+                  )
+                when :delete, :destroy
+                  create_method(
+                    klass,
+                    method_name.to_s,
+                    parameters: [Parlour::RbiGenerator::Parameter.new("*records", type: const_collection)],
+                    return_type: "T::Array[#{@constant}]"
+                  )
+                when :load_target
+                  create_method(
+                    klass,
+                    method_name.to_s,
+                    parameters: [],
+                    return_type: "T::Array[#{@constant}]"
+                  )
+                when :replace
+                  create_method(
+                    klass,
+                    method_name.to_s,
+                    parameters: [Parlour::RbiGenerator::Parameter.new("other_array", type: const_collection)],
+                    return_type: nil
+                  )
+                when :reset_scope
+                  # skip
+                when :scope
+                  create_method(
+                    klass,
+                    method_name.to_s,
+                    parameters: [],
+                    return_type: @association_relation_class_name
+                  )
+                when :target
+                  create_method(
+                    klass,
+                    method_name.to_s,
+                    parameters: [],
+                    return_type: "T.untyped"
+                  )
+                end
+              end
+
+              methods = T.let({
+                "==": {
+                  params: [
+                    Parlour::RbiGenerator::Parameter.new("other", type: "T.untyped"),
+                  ],
+                  return_type: "T::Boolean",
+                },
+                delete_all: {
+                  params: [
+                    Parlour::RbiGenerator::Parameter.new("dependent", type: "T.untyped", default: "nil"),
+                  ],
+                  return_type: "Integer",
+                },
+                proxy_association: {
+                  return_type: "T.untyped",
+                },
+                reload: {
+                  return_type: nil,
+                },
+                reset: {
+                  return_type: nil,
+                },
+              }, T::Hash[Symbol, MethodDefinition])
+
+              methods.each_pair do |method, props|
+                create_method(
+                  klass,
+                  method.to_s,
+                  parameters: props[:params],
+                  return_type: props[:returns]
+                )
+              end
+            end
+          end
 
           sig { void }
           def create_common_methods
@@ -249,154 +379,12 @@ module Tapioca
             end
           end
 
-          sig { void }
-          def create_classes_and_includes
-            # The model always extends the generated relation module
-            @root.path(@constant) do |klass|
-              klass.create_extend(@relation_methods_module_name)
-            end
-            create_relation_class
-            create_association_relation_class
-            create_association_collection_proxy_class
-          end
-
-          sig { void }
-          def create_relation_class
-            superclass = "ActiveRecord::Relation"
-
-            # The relation subclass includes the generated relation module
-            @root.create_class(@relation_class_name, superclass: superclass) do |klass|
-              klass.create_include(@relation_methods_module_name)
-              klass.create_constant("Elem", value: "type_member(fixed: #{@constant})")
-            end
-          end
-
-          sig { void }
-          def create_association_relation_class
-            superclass = "ActiveRecord::AssociationRelation"
-
-            # Association subclasses include the generated association relation module
-            @root.create_class(@association_relation_class_name, superclass: superclass) do |klass|
-              klass.create_include(@association_relation_methods_module_name)
-              klass.create_constant("Elem", value: "type_member(fixed: #{@constant})")
-            end
-          end
-
-          sig { void }
-          def create_association_collection_proxy_class
-            superclass = "ActiveRecord::Associations::CollectionProxy"
-
-            # The relation subclass includes the generated relation module
-            @root.create_class(@associations_collection_proxy_class_name, superclass: superclass) do |klass|
-              klass.create_include(@association_relation_methods_module_name)
-              klass.create_constant("Elem", value: "type_member(fixed: #{@constant})")
-
-              const_collection = "T.any(" + [
-                @constant.to_s,
-                "T::Array[#{@constant}]",
-                "T::Array[#{@associations_collection_proxy_class_name}]",
-              ].join(", ") + ")"
-
-              collection_proxy_methods = ActiveRecord::Associations::CollectionProxy.instance_methods
-              collection_proxy_methods -= ActiveRecord::AssociationRelation.instance_methods
-
-              collection_proxy_methods.each do |method_name|
-                case method_name
-                when :<<, :append, :concat, :prepend, :push
-                  create_method(
-                    klass,
-                    method_name.to_s,
-                    parameters: [Parlour::RbiGenerator::Parameter.new("*records", type: const_collection)],
-                    return_type: @associations_collection_proxy_class_name
-                  )
-                when :clear
-                  create_method(
-                    klass,
-                    "clear",
-                    parameters: [],
-                    return_type: @associations_collection_proxy_class_name
-                  )
-                when :delete, :destroy
-                  create_method(
-                    klass,
-                    method_name.to_s,
-                    parameters: [Parlour::RbiGenerator::Parameter.new("*records", type: const_collection)],
-                    return_type: "T::Array[#{@constant}]"
-                  )
-                when :load_target
-                  create_method(
-                    klass,
-                    method_name.to_s,
-                    parameters: [],
-                    return_type: "T::Array[#{@constant}]"
-                  )
-                when :replace
-                  create_method(
-                    klass,
-                    "replace",
-                    parameters: [Parlour::RbiGenerator::Parameter.new("other_array", type: const_collection)],
-                    return_type: nil
-                  )
-                when :reset_scope
-                  # skip
-                when :scope
-                  create_method(
-                    klass,
-                    "scope",
-                    parameters: [],
-                    return_type: @association_relation_class_name
-                  )
-                when :target
-                  create_method(
-                    klass,
-                    "target",
-                    parameters: [],
-                    return_type: "T.untyped"
-                  )
-                end
-              end
-
-              methods = T.let({
-                "==": {
-                  params: [
-                    Parlour::RbiGenerator::Parameter.new("other", type: "T.untyped"),
-                  ],
-                  return_type: "T::Boolean",
-                },
-                delete_all: {
-                  params: [
-                    Parlour::RbiGenerator::Parameter.new("dependent", type: "T.untyped", default: "nil"),
-                  ],
-                  return_type: "Integer",
-                },
-                proxy_association: {
-                  return_type: "T.untyped",
-                },
-                reload: {
-                  return_type: nil,
-                },
-                reset: {
-                  return_type: nil,
-                },
-              }, T::Hash[Symbol, MethodDefinition])
-
-              methods.each_pair do |method, props|
-                create_method(
-                  klass,
-                  method.to_s,
-                  parameters: props[:params],
-                  return_type: props[:returns]
-                )
-              end
-            end
-          end
-
           sig do
             params(
               mod: Parlour::RbiGenerator::Namespace,
               name: String,
               parameters: T::Array[Parlour::RbiGenerator::Parameter],
-              return_type: String
+              return_type: T.nilable(String)
             ).void
           end
           def create_method(mod, name, parameters:, return_type:)

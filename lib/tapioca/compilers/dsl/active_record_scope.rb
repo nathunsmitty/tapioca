@@ -58,26 +58,26 @@ module Tapioca
           )
           return if scope_method_names.empty?
 
-          relation_methods_module_name = "#{constant}::GeneratedRelationMethods"
-          relation_methods_module = root.create_module(relation_methods_module_name)
-          association_relation_methods_module_name = "#{constant}::GeneratedAssociationRelationMethods"
-          association_relation_methods_module = root.create_module(association_relation_methods_module_name)
+          root.path(constant) do |model|
+            relation_methods_module_name = "GeneratedRelationMethods"
+            relation_methods_module = model.create_module(relation_methods_module_name)
+            association_relation_methods_module_name = "GeneratedAssociationRelationMethods"
+            association_relation_methods_module = model.create_module(association_relation_methods_module_name)
 
-          scope_method_names.each do |scope_method|
-            generate_scope_method(
-              relation_methods_module,
-              scope_method.to_s,
-              "#{constant}::ActiveRecord_Relation"
-            )
-            generate_scope_method(
-              association_relation_methods_module,
-              scope_method.to_s,
-              "#{constant}::ActiveRecord_AssociationRelation"
-            )
-          end
+            scope_method_names.each do |scope_method|
+              generate_scope_method(
+                relation_methods_module,
+                scope_method.to_s,
+                "PrivateRelation"
+              )
+              generate_scope_method(
+                association_relation_methods_module,
+                scope_method.to_s,
+                "PrivateAssociationRelation"
+              )
+            end
 
-          root.path(constant) do |k|
-            k.create_extend(relation_methods_module_name)
+            model.create_extend(relation_methods_module_name)
           end
         end
 
