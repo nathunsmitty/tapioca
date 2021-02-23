@@ -282,7 +282,7 @@ module Tapioca
               else
                 add_method(
                   method_name.to_s,
-                  return_type: method_name.end_with?("!") ? @constant.to_s : "T.nilable(#{@constant})"
+                  return_type: method_name.to_s.end_with?("!") ? @constant.to_s : "T.nilable(#{@constant})"
                 )
               end
             end
