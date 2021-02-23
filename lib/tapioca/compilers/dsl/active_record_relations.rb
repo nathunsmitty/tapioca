@@ -41,7 +41,13 @@ module Tapioca
             }
           end
 
-          sig { params(compiler: Base, model: Parlour::RbiGenerator::Namespace, constant: T.class_of(::ActiveRecord::Base)).void }
+          sig do
+            params(
+              compiler: Base,
+              model: Parlour::RbiGenerator::Namespace,
+              constant: T.class_of(::ActiveRecord::Base)
+            ).void
+          end
           def initialize(compiler, model, constant)
             @compiler = compiler
             @model = model
