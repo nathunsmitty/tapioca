@@ -81,11 +81,14 @@ class Tapioca::CliSpec < Minitest::HooksSpec
     ]
 
     Bundler.with_unbundled_env do
-      IO.popen(
+      process = IO.popen(
         exec_command.join(' '),
         chdir: repo_path,
         err: [:child, :out],
-      ).read
+      )
+      body = process.read
+      process.close
+      body
     end
   end
 
@@ -568,6 +571,62 @@ class Tapioca::CliSpec < Minitest::HooksSpec
       refute_path_exists("#{outdir}/post.rbi")
       refute_path_exists("#{outdir}/namespace/comment.rbi")
       refute_path_exists("#{outdir}/user.rbi")
+    end
+
+    describe("--verify") do
+      before do
+        execute("init")
+        execute("dsl")
+      end
+
+      it 'returns exit(0) if no RBIs have changed' do
+        output = execute("dsl", "--verify")
+
+        assert_includes(output, <<~OUTPUT)
+          Nothing to do, all RBIs are up-to-date.
+        OUTPUT
+      end
+
+      it 'returns exit(1) if RBIs have changed' do
+        assert_raises SystemExit do
+          # modify an RBI so that changes will be generated
+
+          output = execute("dsl", "--verify")
+
+          assert_includes(output, <<~OUTPUT)
+            RBI files are out-of-date, please run `bundle exec tapioca dsl` to update.
+            Reason:
+          OUTPUT
+        end
+      end
+
+      it 'returns exit(1) if new files are added' do
+        assert_raises SystemExit do
+          File.write(repo_path / "file.rb", <<~RUBY)
+            # typed: true
+            # frozen_string_literal: true
+
+            class Foo < ::Undef1
+              include(SmartProperties)
+
+              property :title, accepts: String
+
+              def foo
+                Undef2.new
+              end
+            end
+          RUBY
+
+          output = execute("dsl", "--verify")
+
+          File.delete(repo_path / "file.rb")
+
+          assert_includes(output, <<~OUTPUT)
+            RBI files are out-of-date, please run `bundle exec tapioca dsl` to update.
+            Reason:
+          OUTPUT
+        end
+      end
     end
   end
 
